@@ -1,0 +1,4 @@
+resource cryptostick.webcrypto content/
+content cryptostick.webcrypto content/
+locale cryptostick.webcrypto en-US locale/en-US/
+manifest components/cryptostick.webcrypto.manifest

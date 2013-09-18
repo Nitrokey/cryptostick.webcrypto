@@ -1,0 +1,4 @@
+component {64bdef9e-1f0f-11e3-b537-d703fecd4198} cryptostick-webcrypto.js
+contract @cryptostick.com/cryptostick.webcrypto;1 {64bdef9e-1f0f-11e3-b537-d703fecd4198}
+category JavaScript-global-property cryptostick @cryptostick.com/cryptostick.webcrypto;1
+category app-startup cryptostick.webcrypto @cryptostick.com/cryptostick.webcrypto;1
