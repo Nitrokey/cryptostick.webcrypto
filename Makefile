@@ -6,7 +6,7 @@ XPI_FILE?=	cryptostick.webcrypto@cryptostick.com.xpi
 
 all:
 	rm -f "${XPI_FILE}"
-	find . -type f \! -name 'Makefile' \! -name '.*.swp' \! -name '*~' \! -name '*.xpi' -print0 | xargs -0r zip "${XPI_FILE}" || (rm -f "${XPI_FILE}"; false)
+	find . -type f \! -path '*/.git/*' \! -name 'Makefile' \! -name '.*.swp' \! -name '*~' \! -name '*.xpi' -print0 | xargs -0r zip "${XPI_FILE}" || (rm -f "${XPI_FILE}"; false)
 	cp "${XPI_FILE}" "${EXTENSIONS_DIR}/${XPI_FILE}"
 
 clean:
