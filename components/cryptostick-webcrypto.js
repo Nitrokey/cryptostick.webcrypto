@@ -65,6 +65,8 @@ XPCOMUtils.defineLazyGetter(this, "crypto", function (){
  * that runs all WeaveCrypto (NSS) functions off main thread via ctypes
  */
 
+Cu.import("resource://cryptostick.webcrypto/CryptoStickPromise.jsm");
+
 function CryptoStickAPI() {}
 
 CryptoStickAPI.prototype = {
@@ -135,17 +137,25 @@ CryptoStickAPI.prototype = {
 
     let api = {
 
-      hash: {
-        SHA256: self.SHA256.bind(self),
-        __exposedProps__: {
-          SHA256: "r",
-        },
+      crypto: {
+	subtle: {
+	  __exposedProps__: {}
+	},
+	__exposedProps__: {
+	  subtle: "r"
+	}
+      },
+
+      cryptokeys: {
+	getKeyByName: self.getKeyByName.bind(self),
+	__exposedProps__: {
+	  getKeyByName: "r"
+	}
       },
 
       __exposedProps__: {
-        pk: "r",
-        sym: "r",
-        hash: "r",
+        crypto: "r",
+        cryptokeys: "r",
       },
     };
 
@@ -181,6 +191,23 @@ CryptoStickAPI.prototype = {
     }
     crypto.SHA256(aPlainText, aCallback, this.sandbox);
   },
+
+  getKeyByName: function CS_GetKeyByName(name)
+  {
+    var res = new CryptoStickPromise();
+
+    if (name != null && !(typeof name == "string")) {
+      res._onerror("The getKeyByName() argument should be a string");
+      return res;
+    }
+
+    try {
+      crypto.getKeyByName(name, res, this.sandbox);
+    } catch (err) {
+      res._onerror("CryptoStick.cryptokeys.getKeyByName() exception: " + err);
+    }
+    return res;
+  }
 };
 
 

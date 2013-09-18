@@ -54,6 +54,8 @@
 
 var DEBUG = false;
 
+importScripts("resource://cryptostick.webcrypto/CryptoStickPromise.jsm");
+
 function log(aMessage) {
   if (!DEBUG){
     return;
@@ -62,6 +64,7 @@ function log(aMessage) {
   dump(_msg);
 }
 
+const GET_KEY_BY_NAME	= "getKeyByName";
 const GENERATE_KEYPAIR  = "generateKeypair";
 const ENCRYPT           = "encrypt";
 const DECRYPT           = "decrypt";
@@ -74,6 +77,8 @@ const WRAP_SYM_KEY      = "wrapSymKey";
 const VERIFY_PASSPHRASE = "verifyPassphrase";
 const SHUTDOWN          = "shutdown";
 const INITIALIZE        = "init";
+
+const RES_GET_KEY_BY_NAME	= "done_getKeyByName";
 
 onmessage = function cryptostickWorkerOnMessage(aEvent)
 {
@@ -89,6 +94,10 @@ onmessage = function cryptostickWorkerOnMessage(aEvent)
     catch (ex) {
       WeaveCrypto.initNSS(aEvent.data.fullPath);
     }
+    break;
+  case GET_KEY_BY_NAME:
+    data = WeaveCrypto.findCryptoStick(aEvent.data.name);
+    postMessage({ data: data, result: aEvent.data.result, action: RES_GET_KEY_BY_NAME });
     break;
   case GENERATE_KEYPAIR:
     result = WeaveCryptoWrapper.generateKeypair(aEvent.data.passphrase);
@@ -605,6 +614,35 @@ var WeaveCrypto = {
     // typedef struct PK11SlotInfoStr PK11SlotInfo; (defined in secmodti.h)
     this.nss_t.PK11SlotInfo = ctypes.void_t;
     this.nss_t.PK11SlotList = ctypes.void_t;
+
+    this.nss_t.CK_FLAGS = ctypes.unsigned_long;
+
+    this.nss_t.CK_VERSION = ctypes.StructType(
+	"CK_VERSION",[
+		{ major:		ctypes.unsigned_char },
+		{ minor:		ctypes.unsigned_char }]);
+
+    this.nss_t.CK_TOKEN_INFO = ctypes.StructType(
+	"CK_TOKEN_INFO", [
+		{ label: 		ctypes.ArrayType(ctypes.unsigned_char, 32) },
+		{ manufacturerID:	ctypes.ArrayType(ctypes.unsigned_char, 32) },
+		{ model:		ctypes.ArrayType(ctypes.unsigned_char, 16) },
+		{ serialNumber:		ctypes.ArrayType(ctypes.unsigned_char, 16) },
+		{ flags:		this.nss_t.CK_FLAGS },
+		{ ulMaxSessionCount:	ctypes.unsigned_long },
+		{ ulSessionCount:	ctypes.unsigned_long },
+		{ ulMaxRwSessionCount:	ctypes.unsigned_long },
+		{ ulRwSessionCount:	ctypes.unsigned_long },
+		{ ulMaxPinLen:		ctypes.unsigned_long },
+		{ ulMinPinLen:		ctypes.unsigned_long },
+		{ ulTotalPublicMemory:	ctypes.unsigned_long },
+		{ ulFreePublicMemory:	ctypes.unsigned_long },
+		{ ulTotalPrivateMemory:	ctypes.unsigned_long },
+		{ ulFreePrivateMemory:	ctypes.unsigned_long },
+		{ hardwareVersion:	this.nss_t.CK_VERSION },
+		{ firmwareVersion:	this.nss_t.CK_VERSION },
+		{ utcTime:		ctypes.ArrayType(ctypes.unsigned_char, 16) }]);
+
     // security/nss/lib/util/pkcs11t.h
     this.nss_t.CK_MECHANISM_TYPE = ctypes.unsigned_long;
     this.nss_t.CK_ATTRIBUTE_TYPE = ctypes.unsigned_long;
@@ -774,6 +812,10 @@ var WeaveCrypto = {
     this.nss.PK11_GetTokenName = nsslib.declare("PK11_GetTokenName",
                                                       ctypes.default_abi, ctypes.char.ptr,
 						      this.nss_t.PK11SlotInfo.ptr);
+    this.nss.PK11_GetTokenInfo = nsslib.declare("PK11_GetTokenInfo",
+                                                      ctypes.default_abi, this.nss_t.SECStatus,
+						      this.nss_t.PK11SlotInfo.ptr,
+						      this.nss_t.CK_TOKEN_INFO.ptr);
     this.nss.PK11_GetSlotName = nsslib.declare("PK11_GetSlotName",
                                                       ctypes.default_abi, ctypes.char.ptr,
 						      this.nss_t.PK11SlotInfo.ptr);
@@ -987,6 +1029,9 @@ var WeaveCrypto = {
     this.nss.SECKEY_DestroyPublicKey = nsslib.declare("SECKEY_DestroyPublicKey",
                                                       ctypes.default_abi, ctypes.void_t,
                                                       this.nss_t.SECKEYPublicKey.ptr);
+    this.nss.SECKEY_DestroyPublicKeyList = nsslib.declare("SECKEY_DestroyPublicKeyList",
+                                                      ctypes.default_abi, ctypes.void_t,
+                                                      this.nss_t.SECKEYPublicKeyList.ptr);
     // security/nss/lib/cryptohi/keyhi.h#186
     // extern void SECKEY_DestroyPrivateKey(SECKEYPrivateKey *key);
     this.nss.SECKEY_DestroyPrivateKey = nsslib.declare("SECKEY_DestroyPrivateKey",
@@ -1002,21 +1047,32 @@ var WeaveCrypto = {
     this.nss.SECKEY_DestroySubjectPublicKeyInfo = nsslib.declare("SECKEY_DestroySubjectPublicKeyInfo",
                                                                  ctypes.default_abi, ctypes.void_t,
                                                                  this.nss_t.CERTSubjectPublicKeyInfo.ptr);
-
-    // now do a quick test
-    var csfound = this.findCryptoStick(true);
-    csfound = this.findCryptoStick(false);
   },
 
-  checkCryptoStick: function(slot, flagSign) {
+  checkCryptoStick: function(slot, name) {
+    var comps = {};
+    if (name != null) {
+      var compsarr = name.split('.');
+      var compnames = "";
+
+      for (i = 0; i < compsarr.length; i += 2) {
+	comps[compsarr[i]] = compsarr[i + 1];
+	compnames = compnames + " " + i;
+      }
+      if (comps['tok'] == null || comps['s'] == null || comps['t'] == null) {
+	dump("Invalid key name " + name + ", no 'tok', 's' or 't' components, just: " + compnames);
+	return [];
+      }
+    }
+
     if (slot.isNull())
-      return false;
+      return [];
     var info = slot.contents.slot;
     if (info.isNull() || !this.nss.PK11_IsHW(info))
-      return false;
+      return [];
     var tokenName = this.nss.PK11_GetTokenName(info), slotName = this.nss.PK11_GetSlotName(info);
     if (tokenName.isNull())
-      return false;
+      return [];
     else
       tokenName = tokenName.readString();
     if (slotName.isNull())
@@ -1024,48 +1080,54 @@ var WeaveCrypto = {
     else
       slotName = slotName.readString();
     if (tokenName.indexOf('OpenPGP card') == -1)
-      return false;
-    var sigpos = tokenName.indexOf('(sig)');
-    var res, listpub, pub; // RDBG
-    if (flagSign)
-//      return sigpos != -1;
-      res = sigpos != -1;
-    else
-//      return sigpos == -1;
-      res = sigpos == -1;
-    if (!res)
-      return res;
-    this.log("RDBG found an OpenPGP card: " + tokenName);
+      return [];
+
+    var tinfo = new this.nss_t.CK_TOKEN_INFO();
+    var res = this.nss.PK11_GetTokenInfo(info, tinfo.address());
+    if (res != 0)
+      return [];
+
+    function readUCharArray(obj, len) {
+      var i, s;
+      for (i = 0, s = ""; i < len && obj[i] != 0; i++)
+	s += String.fromCharCode(obj[i]);
+      return s.trimRight();
+    }
+
+    var tokserial = readUCharArray(tinfo.serialNumber, 16);
+    if (name != null && tokserial != comps['tok'])
+      return [];
+
+    var sigpos = tokenName.indexOf('(sig)') == -1? 0: 1;
+    var listpub, pub;
     listpub = this.nss.PK11_ListPublicKeysInSlot(info, null);
     if (listpub == null || listpub.isNull())
-      return res;
+      return [];
     /* Bah, this is where we get down'n'dirty... */
     /* Ooohkay, let's try to get the first element... */
     var llist = listpub.contents.list;
     var lnext = llist.next;
     if (lnext == null || lnext.isNull()) {
-      this.nss.PK11_DestroyPublicKeyList(listpub);
-      return res;
+      this.nss.SECKEY_DestroyPublicKeyList(listpub);
+      return [];
     }
     var nodeptr = ctypes.cast(lnext, this.nss_t.SECKEYPublicKeyListNode.ptr);
     if (nodeptr == null || nodeptr.isNull()) {
-      this.nss.PK11_DestroyPublicKeyList(listpub);
-      return res;
+      this.nss.SECKEY_DestroyPublicKeyList(listpub);
+      return [];
     }
+    var keys = [];
     for (nodeptr = ctypes.cast(lnext, this.nss_t.SECKEYPublicKeyListNode.ptr);
 	nodeptr != null && !nodeptr.isNull() && ctypes.cast(nodeptr, ctypes.voidptr_t).toString() != ctypes.cast(llist.address(), ctypes.voidptr_t).toString();
 	nodeptr = ctypes.cast(nodeptr.contents.links.next, this.nss_t.SECKEYPublicKeyListNode.ptr)) {
-      this.log("RDBG     - we seem to have a node!");
       var keyptr = nodeptr.contents.key;
-      this.log("RDBG     - keyptr: "+ keyptr);
       if (keyptr != null && keyptr.isNull())
-      this.log("RDBG     - contents: " + keyptr.contents);
-      this.log("RDBG     - key type: " + keyptr.contents.keyType);
       if (keyptr.contents.keyType != 1)
 	continue;
-      this.log("RDBG     - RSA key modulus len: " + keyptr.contents.rsa.modulus.len);
       var data = keyptr.contents.rsa.modulus.data;
       var len = keyptr.contents.rsa.modulus.len;
+      if (len > 8)
+	len = 8;
       var arr = [], astr = "";
       for (var i = 0; i < len; i++, data = data.increment()) {
 	arr[arr.length] = data.contents;
@@ -1074,53 +1136,46 @@ var WeaveCrypto = {
 	  ch = '0' + ch;
 	astr = astr + ch;
       }
-      this.log("RDBG     - astr: " + astr);
+
+      var keyName = "tok." + tokserial + ".s." + sigpos + ".t." + keyptr.contents.keyType + ".m." + astr;
+      var key = { name: keyName, id: null };
+      if (name != null) {
+	if (keyName != name)
+	  continue;
+	else
+	  return [key];
+      } else {
+	keys[keys.length] = key;
+      }
     }
-    this.nss.PK11_DestroyPublicKeyList(listpub);
-    return res;
+    this.nss.SECKEY_DestroyPublicKeyList(listpub);
+    return keys;
   },
 
-  findCryptoStick: function(flagSign) {
-    var slotlist, slot, found;
-
-    if (this.cryptoStickSlotList != null) {
-      try {
-	this.nss.PK11_FreeSlotList(this.cryptoStickSlotList);
-      } catch (err) {
-      }
-      this.cryptoStickSlotList = null;
-    }
-    this.cryptoStickSlot = null;
+  findCryptoStick: function(name) {
+    var slotlist, slot;
 
     found = false;
+    keys = [];
     try {
       slotlist = this.nss.PK11_GetAllTokens(this.nss.CKM_INVALID_MECHANISM, 1, 2, null);
       for (slot = this.nss.PK11_GetFirstSafe(slotlist); !slot.isNull(); slot = this.nss.PK11_GetNextSafe(slotlist, slot, 0)) {
-	var res = this.checkCryptoStick(slot, flagSign);
-	if (res) {
-	  found = true;
-	  break;
-	}
+	var more = this.checkCryptoStick(slot, name);
+	keys = keys.concat(more);
       }
-
-      if (!found) {
-	this.cryptoStickSlotList = null;
-	this.cryptoStickSlot = null;
-	return false;
-      }
+      this.nss.PK11_FreeSlotList(slotlist);
+      slotlist = null;
+      return { ok: true, data: keys };
     } catch (err) {
       if (slotlist != null) {
 	try {
 	  this.nss.PK11_FreeSlotList(slotlist);
-	} catch (err) {
+	} catch (errx) {
 	}
       }
-      return false;
+      return { ok: false, data: "Error looking for the CryptoStick NSS slot: " + err };
     }
-
-    this.cryptoStickSlotList = slotlist;
-    this.cryptoStickSlot = slot;
-    return true;
+    /* NOTREACHED */
   },
 
   algorithm : AES_256_CBC,

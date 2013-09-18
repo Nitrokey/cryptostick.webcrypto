@@ -74,8 +74,55 @@ XPCOMUtils.defineLazyGetter(this, "worker", function (){
 const SHA256_COMPLETE     = "SHA256Complete";
 const WORKER_ERROR        = "error";
 
+function CryptoStickWebKey(name, id)
+{
+  this.name = name;
+  this.id = id;
+
+  this.__exposedProps__ = {
+    name:	'r',
+    id:		'r'
+  };
+}
+
+function CryptoStickWebKeyArray(arr)
+{
+  this.arr = arr;
+
+  this.count = function() { return this.arr.length; }
+  this.get = function(i) { return this.arr[i]; }
+
+  this.__exposedProps__ = {
+    count: 'r',
+    get: 'r'
+  };
+}
+
+function buildTarget(obj)
+{
+  return {
+    target: {
+      result: obj,
+      __exposedProps__: { result: 'r' }
+    },
+    __exposedProps__: { target: 'r' }
+  };
+}
+
 worker.onmessage = function DCM_worker_onmessage(aEvent) {
   switch (aEvent.data.action) {
+  case "done_getKeyByName":
+    keys = aEvent.data.data;
+    var res = resultPop(aEvent.data.result);
+    if (keys.ok) {
+      var exposed = [];
+      for (i = 0; i < keys.data.length; i++)
+        exposed[exposed.length] = new CryptoStickWebKey(keys.data[i].name, keys.data[i].id);
+      res._oncomplete(buildTarget(new CryptoStickWebKeyArray(exposed)));
+    } else {
+      res._onerror(buildTarget(keys.data));
+    }
+    break;
   case SHA256_COMPLETE:
     Callbacks.handleSHA256(aEvent.data.hashedString);
     break;
@@ -125,6 +172,29 @@ const BLANK_CONFIG_OBJECT = {};
  * CryptoStickMethods' onmessage chooses which callback to execute in the original
  * content window's sandbox.
  */
+
+var results = {};
+var resultSerial = 0;
+
+function resultRegister(res)
+{
+  var serial = resultSerial++;
+  results[serial] = res;
+  return serial;
+}
+
+function resultPop(idx)
+{
+  var res = results[idx];
+  delete results[idx];
+  return res;
+}
+
+function resultGet(idx)
+{
+  return results[idx];
+}
+
 var CryptoStickMethods = {
 
   xullWindow: null,
@@ -230,6 +300,14 @@ var CryptoStickMethods = {
     let sandbox = Callbacks.SHA256.sandbox;
     sandbox.importFunction(callback, "SHA256Callback");
     Cu.evalInSandbox("SHA256Callback();", sandbox, "1.8", "CryptoStick", 1);
+  },
+
+  getKeyByName: function CSM_getKeyByName(name, res)
+  {
+    var resultIdx = resultRegister(res);
+    worker.postMessage({ action: "getKeyByName"/*GET_KEY_BY_NAME*/,
+			 name: name,
+			 result: resultIdx });
   },
 
   config: BLANK_CONFIG_OBJECT
