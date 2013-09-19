@@ -74,15 +74,43 @@ XPCOMUtils.defineLazyGetter(this, "worker", function (){
 const SHA256_COMPLETE     = "SHA256Complete";
 const WORKER_ERROR        = "error";
 
-function CryptoStickWebKey(name, id)
+function CryptoStickWebKey()
 {
-  this.name = name;
-  this.id = id;
+  this.name = null;
+  this.id = null;
+
+  this.extractable = null;
+  this.algorithm = {
+    name: null,
+    __exposedProps__: {
+      name:	'r'
+    }
+  };
+  this.keyUsage = [];
+  this.type = null;
+
+  this.cs_pkcs11id = null;
 
   this.__exposedProps__ = {
     name:	'r',
-    id:		'r'
+    id:		'r',
+
+    extractable:'r',
+    algorithm:	'r',
+    keyUsage:	'r',
+    type:	'r',
+
+    cs_pkcs11id:'r'
   };
+
+  this.fromChromeKey = function (k)
+  {
+    for (var f in this.__exposedProps__)
+      if (f != "algorithm")
+	this[f] = k[f];
+    this.algorithm.name = k.algorithm;
+    return this;
+  }
 }
 
 function CryptoStickWebKeyArray(arr)
@@ -117,7 +145,7 @@ worker.onmessage = function DCM_worker_onmessage(aEvent) {
     if (keys.ok) {
       var exposed = [];
       for (i = 0; i < keys.data.length; i++)
-        exposed[exposed.length] = new CryptoStickWebKey(keys.data[i].name, keys.data[i].id);
+	exposed[exposed.length] = new CryptoStickWebKey().fromChromeKey(keys.data[i]);
       res._oncomplete(buildTarget(new CryptoStickWebKeyArray(exposed)));
     } else {
       res._onerror(buildTarget(keys.data));

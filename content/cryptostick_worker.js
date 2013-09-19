@@ -1138,7 +1138,16 @@ var WeaveCrypto = {
       }
 
       var keyName = "tok." + tokserial + ".s." + sigpos + ".t." + keyptr.contents.keyType + ".m." + astr;
-      var key = { name: keyName, id: null };
+      var key = {
+	name: keyName,
+	id: null,
+	algorithm: sigpos == 1? "RSASSA-PKCS1-v1_5": "RSAES-PKCS1-v1_5",
+	extractable: true,
+	keyUsage: [sigpos == 1? "verify": "encrypt"],
+	type: "public",
+
+	cs_pkcs11id: keyptr.contents.pkcs11ID.toString()
+      };
       if (name != null) {
 	if (keyName != name)
 	  continue;
