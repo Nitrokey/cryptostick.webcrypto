@@ -65,6 +65,7 @@ function log(aMessage) {
 }
 
 const GET_KEY_BY_NAME	= "getKeyByName";
+const EXPORT_KEY	= "exportKey";
 const GENERATE_KEYPAIR  = "generateKeypair";
 const ENCRYPT           = "encrypt";
 const DECRYPT           = "decrypt";
@@ -79,6 +80,7 @@ const SHUTDOWN          = "shutdown";
 const INITIALIZE        = "init";
 
 const RES_GET_KEY_BY_NAME	= "done_getKeyByName";
+const RES_EXPORT_KEY		= "done_exportKey";
 
 onmessage = function cryptostickWorkerOnMessage(aEvent)
 {
@@ -98,6 +100,10 @@ onmessage = function cryptostickWorkerOnMessage(aEvent)
   case GET_KEY_BY_NAME:
     data = WeaveCrypto.findCryptoStick(aEvent.data.name);
     postMessage({ data: data, result: aEvent.data.result, action: RES_GET_KEY_BY_NAME });
+    break;
+  case EXPORT_KEY:
+    data = WeaveCrypto.exportKey(aEvent.data.format, aEvent.data.key);
+    postMessage({ data: data, result: aEvent.data.result, action: RES_EXPORT_KEY });
     break;
   case GENERATE_KEYPAIR:
     result = WeaveCryptoWrapper.generateKeypair(aEvent.data.passphrase);
@@ -836,6 +842,10 @@ var WeaveCrypto = {
                                                       ctypes.default_abi, this.nss_t.SECStatus,
 						      this.nss_t.PK11SlotInfo.ptr, this.nss_t.PRBool,
 						      ctypes.char.ptr);
+
+    this.nss.PK11_DEREncodePublicKey = nsslib.declare("PK11_DEREncodePublicKey",
+                                                      ctypes.default_abi, this.nss_t.SECItem.ptr,
+						      this.nss_t.SECKEYPublicKey.ptr);
     // security/nss/lib/pk11wrap/pk11pub.h#328
     // PK11SymKey *PK11_KeyGen(PK11SlotInfo *slot,CK_MECHANISM_TYPE type, SECItem *param, int keySize,void *wincx);
     this.nss.PK11_KeyGen = nsslib.declare("PK11_KeyGen",
@@ -1066,7 +1076,7 @@ var WeaveCrypto = {
                                                                  this.nss_t.CERTSubjectPublicKeyInfo.ptr);
   },
 
-  checkCryptoStick: function(slot, name) {
+  checkCryptoStick: function(slot, name, retKey) {
     var comps = {};
     if (name != null) {
       var compsarr = name.split('.');
@@ -1080,6 +1090,8 @@ var WeaveCrypto = {
 	dump("Invalid key name " + name + ", no 'tok', 's', 't' or 'kt' components, just: " + compnames);
 	return [];
       }
+    } else if (retKey) {
+      throw "cryptostick.webcrypto INTERNAL ERROR: checkCryptoStick() invoked with a null name and retKey == true\n";
     }
 
     if (slot.isNull())
@@ -1181,7 +1193,7 @@ var WeaveCrypto = {
       return node == null || node.isNull() || ctypes.cast(node, ctypes.voidptr_t).toString() == ctypes.cast(list.address(), ctypes.voidptr_t).toString();
     }
 
-    var keys = [];
+    var keys = [], foundPub = false, foundPriv = false;
     for (nodepub = PUBKEY_LIST_FIRST(lnextpub),
 	 nodepriv = PRIVKEY_LIST_FIRST(lnextpriv);
 	 !PUBKEY_LIST_END(nodepub, llistpub) &&
@@ -1226,11 +1238,17 @@ var WeaveCrypto = {
 	cs_pkcs11id: keypub.contents.pkcs11ID.toString(),
 	cs_numBits: keypub.contents.rsa.modulus.len * 8
       };
+      if (retKey)
+	key = { type: 'public', key: keypub, slotlist: listpub };
       if (name != null) {
-	if (keyName == name)
-	  return [key];
+	if (keyName == name) {
+	  keys = [key];
+	  foundPub = true;
+	  break;
+	}
       } else {
 	keys[keys.length] = key;
+	foundPub = true;
       }
 
       var keyName = "tok." + tokserial + ".t.v.s." + sigpos + ".kt." + keypriv.contents.keyType + ".m." + astr;
@@ -1245,31 +1263,44 @@ var WeaveCrypto = {
 	cs_pkcs11id: keypriv.contents.pkcs11ID.toString(),
 	cs_numBits: keypub.contents.rsa.modulus.len * 8
       };
+      if (retKey)
+	key = { type: 'private', key: keypriv, slotlist: listpriv };
       if (name != null) {
-	if (keyName == name)
-	  return [key];
+	if (keyName == name) {
+	  keys = [key];
+	  foundPriv = true;
+	  break;
+	}
       } else {
 	keys[keys.length] = key;
+	foundPriv = true;
       }
     }
 
-    if (!PUBKEY_LIST_END(nodepub, llistpub))
+    if (PUBKEY_LIST_END(nodepriv, llistpriv) && !PUBKEY_LIST_END(nodepub, llistpub))
       dump("ERROR: CryptoStick consistency error: public keys without private keys in slot " + tokenName + "\n");
-    if (!PRIVKEY_LIST_END(nodepriv, llistpriv))
+    if (PUBKEY_LIST_END(nodepub, llistpub) && !PRIVKEY_LIST_END(nodepriv, llistpriv))
       dump("ERROR: CryptoStick consistency error: private keys without public keys in slot " + tokenName + "\n");
-    this.nss.SECKEY_DestroyPublicKeyList(listpub);
+
+    /* Don't free the lists... maybe. */
+    if (!retKey || !foundPub)
+      this.nss.SECKEY_DestroyPublicKeyList(listpub);
+    if (!retKey || !foundPriv)
+      this.nss.SECKEY_DestroyPrivateKeyList(listpriv);
     return keys;
   },
 
-  findCryptoStick: function(name) {
+  findCryptoStick: function(name, retKey) {
     var slotlist, slot;
 
+    if (retKey == null)
+      retKey = false;
     found = false;
     keys = [];
     try {
       slotlist = this.nss.PK11_GetAllTokens(this.nss.CKM_INVALID_MECHANISM, 1, 2, null);
       for (slot = this.nss.PK11_GetFirstSafe(slotlist); !slot.isNull(); slot = this.nss.PK11_GetNextSafe(slotlist, slot, 0)) {
-	var more = this.checkCryptoStick(slot, name);
+	var more = this.checkCryptoStick(slot, name, retKey);
 	keys = keys.concat(more);
       }
       this.nss.PK11_FreeSlotList(slotlist);
@@ -1286,6 +1317,57 @@ var WeaveCrypto = {
       return { ok: false, data: "Error looking for the CryptoStick NSS slot: " + err };
     }
     /* NOTREACHED */
+  },
+
+		
+  destroyLists: function(keys) {
+    var destroyed = [];
+
+    for (var i = 0; i < keys.length; i++) {
+      var lst = keys[i].slotlist;
+      for (var j = 0; j < destroyed.length; j++)
+	if (destroyed[j] == lst)
+	  break;
+      if (j != destroyed.length)
+	continue;
+
+      if (keys[i].type == "public")
+	this.nss.SECKEY_DestroyPublicKeyList(lst);
+      else
+	this.nss.SECKEY_DestroyPrivateKeyList(lst);
+      destroyed[destroyed.length] = lst;
+    }
+  },
+
+  exportKey: function(format, key) {
+    key = JSON.parse(key);
+    /* TODO: figure out if we cannot really use the pkcs11ID field... */
+    var res = this.findCryptoStickKey(key.name);
+    if (!res.ok)
+      return res;
+    var seckey = res.data;
+    var secitem = this.nss.PK11_DEREncodePublicKey(seckey.key);
+    this.destroyLists([seckey]);
+    if (secitem == null || secitem.isNull())
+      return { ok: false, data: 'DEREncodePublicKey() failed' };
+
+    var s = "", i, ptr = secitem.contents.data, len = secitem.contents.len;
+    for (i = 0; i < len; i++) {
+      s += String.fromCharCode(ptr.contents);
+      ptr = ptr.increment();
+    }
+    return { ok: true, data: s };
+  },
+
+  findCryptoStickKey: function(name) {
+    var res = this.findCryptoStick(name, true);
+    var keys = res.data;
+    if (keys.length != 1) {
+      dump("cryptostick.webcrypto INTERNAL ERROR: findCryptoStick(retKey == true) returned " + keys.length + " objects instead of one!\n");
+      this.destroyLists(keys);
+      return { ok: false, data: 'cryptostick.webcrypto internal error' };
+    }
+    return { ok: true, data: keys[0] };
   },
 
   algorithm : AES_256_CBC,

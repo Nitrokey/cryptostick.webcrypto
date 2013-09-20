@@ -139,7 +139,10 @@ CryptoStickAPI.prototype = {
 
       crypto: {
 	subtle: {
-	  __exposedProps__: {}
+	  exportKey: self.exportKey.bind(self),
+	  __exposedProps__: {
+	    exportKey: "r"
+	  }
 	},
 	__exposedProps__: {
 	  subtle: "r"
@@ -205,6 +208,27 @@ CryptoStickAPI.prototype = {
       crypto.getKeyByName(name, res, this.sandbox);
     } catch (err) {
       res._onerror("CryptoStick.cryptokeys.getKeyByName() exception: " + err);
+    }
+    return res;
+  },
+
+  exportKey: function CS_ExportKey(format, key)
+  {
+    var res = new CryptoStickPromise();
+
+    if (format == null || typeof(format) != "string") {
+      res._onerror("The exportKey() 'format' argument should be a string");
+      return res;
+    }
+    if (key == null || typeof(key) != "object" || key.cs_pkcs11id == null) {
+      res._onerror("The exportKey() 'key' argument should be a cryptostick.webcrypto key");
+      return res;
+    }
+
+    try {
+      crypto.exportKey(format, JSON.stringify(key), res, this.sandbox);
+    } catch (err) {
+      res._onerror("CryptoStick.crypto.subtle.exportKey() exception: " + err);
     }
     return res;
   }

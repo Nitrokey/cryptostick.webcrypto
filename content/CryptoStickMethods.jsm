@@ -153,6 +153,19 @@ worker.onmessage = function DCM_worker_onmessage(aEvent) {
       res._onerror(buildTarget(keys.data));
     }
     break;
+  case "done_exportKey":
+    exp = aEvent.data.data;
+    var res = resultPop(aEvent.data.result);
+    if (exp.ok) {
+      var d = exp.data, len = exp.data.length;
+      var arr = [];
+      for (var i = 0; i < len; i++)
+	arr[arr.length] = d.charCodeAt(i);
+      res._oncomplete(buildTarget(arr));
+    } else {
+      res._onerror(buildTarget(exp.data));
+    }
+    break;
   case SHA256_COMPLETE:
     Callbacks.handleSHA256(aEvent.data.hashedString);
     break;
@@ -337,6 +350,15 @@ var CryptoStickMethods = {
     var resultIdx = resultRegister(res);
     worker.postMessage({ action: "getKeyByName"/*GET_KEY_BY_NAME*/,
 			 name: name,
+			 result: resultIdx });
+  },
+
+  exportKey: function CSM_getKeyByName(format, key, res)
+  {
+    var resultIdx = resultRegister(res);
+    worker.postMessage({ action: "exportKey",
+			 format: format,
+			 key: key,
 			 result: resultIdx });
   },
 
