@@ -1223,7 +1223,8 @@ var WeaveCrypto = {
 	keyUsage: [sigpos == 1? "verify": "encrypt"],
 	type: "public",
 
-	cs_pkcs11id: keypub.contents.pkcs11ID.toString()
+	cs_pkcs11id: keypub.contents.pkcs11ID.toString(),
+	cs_numBits: keypub.contents.rsa.modulus.len * 8
       };
       if (name != null) {
 	if (keyName == name)
@@ -1241,7 +1242,8 @@ var WeaveCrypto = {
 	keyUsage: [sigpos == 1? "sign": "decrypt"],
 	type: "private",
 
-	cs_pkcs11id: keypriv.contents.pkcs11ID.toString()
+	cs_pkcs11id: keypriv.contents.pkcs11ID.toString(),
+	cs_numBits: keypub.contents.rsa.modulus.len * 8
       };
       if (name != null) {
 	if (keyName == name)

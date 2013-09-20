@@ -90,6 +90,7 @@ function CryptoStickWebKey()
   this.type = null;
 
   this.cs_pkcs11id = null;
+  this.cs_numBits = null;
 
   this.__exposedProps__ = {
     name:	'r',
@@ -100,7 +101,8 @@ function CryptoStickWebKey()
     keyUsage:	'r',
     type:	'r',
 
-    cs_pkcs11id:'r'
+    cs_pkcs11id:'r',
+    cs_numBits:	'r'
   };
 
   this.fromChromeKey = function (k)
