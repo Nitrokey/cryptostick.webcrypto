@@ -746,10 +746,16 @@ var WeaveCrypto = {
     this.nss_t.SECKEYPublicKeyList = ctypes.StructType(
 	"SECKEYPublicKeyList", [{ list:		this.nss_t.PRCList },
 				{ arena:	ctypes.voidptr_t }]);
+    this.nss_t.SECKEYPrivateKeyList = ctypes.StructType(
+	"SECKEYPrivateKeyList", [{ list:		this.nss_t.PRCList },
+				{ arena:	ctypes.voidptr_t }]);
 
     this.nss_t.SECKEYPublicKeyListNode = ctypes.StructType(
 	"SECKEYPublicKeyListNode", [	{ links:	this.nss_t.PRCList },
 					{ key:		this.nss_t.SECKEYPublicKey.ptr }]);
+    this.nss_t.SECKEYPrivateKeyListNode = ctypes.StructType(
+	"SECKEYPrivateKeyListNode", [	{ links:	this.nss_t.PRCList },
+					{ key:		this.nss_t.SECKEYPrivateKey.ptr }]);
     // pkcs11n.h
     this.nss.CKM_INVALID_MECHANISM = 0xffffffff;
 
@@ -822,6 +828,14 @@ var WeaveCrypto = {
     this.nss.PK11_ListPublicKeysInSlot = nsslib.declare("PK11_ListPublicKeysInSlot",
                                                       ctypes.default_abi, this.nss_t.SECKEYPublicKeyList.ptr,
 						      this.nss_t.PK11SlotInfo.ptr, ctypes.char.ptr);
+    this.nss.PK11_ListPrivKeysInSlot = nsslib.declare("PK11_ListPrivKeysInSlot",
+                                                      ctypes.default_abi, this.nss_t.SECKEYPrivateKeyList.ptr,
+						      this.nss_t.PK11SlotInfo.ptr, ctypes.char.ptr,
+						      ctypes.char.ptr);
+    this.nss.PK11_Authenticate = nsslib.declare("PK11_Authenticate",
+                                                      ctypes.default_abi, this.nss_t.SECStatus,
+						      this.nss_t.PK11SlotInfo.ptr, this.nss_t.PRBool,
+						      ctypes.char.ptr);
     // security/nss/lib/pk11wrap/pk11pub.h#328
     // PK11SymKey *PK11_KeyGen(PK11SlotInfo *slot,CK_MECHANISM_TYPE type, SECItem *param, int keySize,void *wincx);
     this.nss.PK11_KeyGen = nsslib.declare("PK11_KeyGen",
@@ -1037,6 +1051,9 @@ var WeaveCrypto = {
     this.nss.SECKEY_DestroyPrivateKey = nsslib.declare("SECKEY_DestroyPrivateKey",
                                                        ctypes.default_abi, ctypes.void_t,
                                                        this.nss_t.SECKEYPrivateKey.ptr);
+    this.nss.SECKEY_DestroyPrivateKeyList = nsslib.declare("SECKEY_DestroyPrivateKeyList",
+                                                      ctypes.default_abi, ctypes.void_t,
+                                                      this.nss_t.SECKEYPrivateKeyList.ptr);
     // security/nss/lib/util/secoid.h#103
     // extern void SECOID_DestroyAlgorithmID(SECAlgorithmID *aid, PRBool freeit);
     this.nss.SECOID_DestroyAlgorithmID = nsslib.declare("SECOID_DestroyAlgorithmID",
@@ -1059,8 +1076,8 @@ var WeaveCrypto = {
 	comps[compsarr[i]] = compsarr[i + 1];
 	compnames = compnames + " " + i;
       }
-      if (comps['tok'] == null || comps['s'] == null || comps['t'] == null) {
-	dump("Invalid key name " + name + ", no 'tok', 's' or 't' components, just: " + compnames);
+      if (comps['tok'] == null || comps['s'] == null || comps['kt'] == null || comps['t'] == null) {
+	dump("Invalid key name " + name + ", no 'tok', 's', 't' or 'kt' components, just: " + compnames);
 	return [];
       }
     }
@@ -1099,33 +1116,93 @@ var WeaveCrypto = {
       return [];
 
     var sigpos = tokenName.indexOf('(sig)') == -1? 0: 1;
+
+    res = this.nss.PK11_Authenticate(info, 0, null);
+    if (res != 0)
+      return [];
+
     var listpub, pub;
     listpub = this.nss.PK11_ListPublicKeysInSlot(info, null);
     if (listpub == null || listpub.isNull())
       return [];
+    listpriv = this.nss.PK11_ListPrivKeysInSlot(info, null, null);
+    if (listpriv == null || listpriv.isNull())
+      return [];
+
     /* Bah, this is where we get down'n'dirty... */
     /* Ooohkay, let's try to get the first element... */
-    var llist = listpub.contents.list;
-    var lnext = llist.next;
-    if (lnext == null || lnext.isNull()) {
+    var llistpub = listpub.contents.list;
+    var lnextpub = llistpub.next;
+    if (lnextpub == null || lnextpub.isNull()) {
       this.nss.SECKEY_DestroyPublicKeyList(listpub);
       return [];
     }
-    var nodeptr = ctypes.cast(lnext, this.nss_t.SECKEYPublicKeyListNode.ptr);
-    if (nodeptr == null || nodeptr.isNull()) {
+    var nodepub = ctypes.cast(lnextpub, this.nss_t.SECKEYPublicKeyListNode.ptr);
+    if (nodepub == null || nodepub.isNull()) {
       this.nss.SECKEY_DestroyPublicKeyList(listpub);
       return [];
     }
+
+    var llistpriv = listpriv.contents.list;
+    var lnextpriv = llistpriv.next;
+    if (lnextpriv == null || lnextpriv.isNull()) {
+      this.nss.SECKEY_DestroyPrivateKeyList(listpriv);
+      return [];
+    }
+    var nodepriv = ctypes.cast(lnextpriv, this.nss_t.SECKEYPrivateKeyListNode.ptr);
+    if (nodepriv == null || nodepriv.isNull()) {
+      this.nss.SECKEY_DestroyPrivateKeyList(listpriv);
+      return [];
+    }
+
+    var self = this;
+
+    function PUBKEY_LIST_FIRST(list) {
+      return ctypes.cast(list, self.nss_t.SECKEYPublicKeyListNode.ptr);
+    }
+
+    function PUBKEY_LIST_NEXT(node) {
+      return ctypes.cast(node.contents.links.next, self.nss_t.SECKEYPublicKeyListNode.ptr);
+    }
+
+    function PUBKEY_LIST_END(node, list) {
+      return node == null || node.isNull() || ctypes.cast(node, ctypes.voidptr_t).toString() == ctypes.cast(list.address(), ctypes.voidptr_t).toString();
+    }
+
+    function PRIVKEY_LIST_FIRST(list) {
+      return ctypes.cast(list, self.nss_t.SECKEYPrivateKeyListNode.ptr);
+    }
+
+    function PRIVKEY_LIST_NEXT(node) {
+      return ctypes.cast(node.contents.links.next, self.nss_t.SECKEYPrivateKeyListNode.ptr);
+    }
+
+    function PRIVKEY_LIST_END(node, list) {
+      return node == null || node.isNull() || ctypes.cast(node, ctypes.voidptr_t).toString() == ctypes.cast(list.address(), ctypes.voidptr_t).toString();
+    }
+
     var keys = [];
-    for (nodeptr = ctypes.cast(lnext, this.nss_t.SECKEYPublicKeyListNode.ptr);
-	nodeptr != null && !nodeptr.isNull() && ctypes.cast(nodeptr, ctypes.voidptr_t).toString() != ctypes.cast(llist.address(), ctypes.voidptr_t).toString();
-	nodeptr = ctypes.cast(nodeptr.contents.links.next, this.nss_t.SECKEYPublicKeyListNode.ptr)) {
-      var keyptr = nodeptr.contents.key;
-      if (keyptr != null && keyptr.isNull())
-      if (keyptr.contents.keyType != 1)
+    for (nodepub = PUBKEY_LIST_FIRST(lnextpub),
+	 nodepriv = PRIVKEY_LIST_FIRST(lnextpriv);
+	 !PUBKEY_LIST_END(nodepub, llistpub) &&
+	 !PRIVKEY_LIST_END(nodepriv, llistpriv);
+	 nodepub = PUBKEY_LIST_NEXT(nodepub),
+	 nodepriv = PRIVKEY_LIST_NEXT(nodepriv)) {
+      var keypub = nodepub.contents.key;
+      if (keypub == null || keypub.isNull() || keypub.contents.keyType != 1)
 	continue;
-      var data = keyptr.contents.rsa.modulus.data;
-      var len = keyptr.contents.rsa.modulus.len;
+
+      var keypriv = nodepriv.contents.key;
+      if (keypriv == null || keypriv.isNull()) {
+	dump("ERROR: CryptoStick consistency error: null private key for non-null public key for " + tokenName + "\n");
+	continue;
+      } else if (keypriv.contents.keyType != keypub.contents.keyType) {
+	dump("ERROR: CryptoStick consistency error: key type mismatch, public: " + keypub.contents.keyType + ", private: " + keypriv.contents.keyType + "\n");
+	continue;
+      }
+
+      var data = keypub.contents.rsa.modulus.data;
+      var len = keypub.contents.rsa.modulus.len;
       if (len > 8)
 	len = 8;
       var arr = [], astr = "";
@@ -1137,7 +1214,7 @@ var WeaveCrypto = {
 	astr = astr + ch;
       }
 
-      var keyName = "tok." + tokserial + ".s." + sigpos + ".t." + keyptr.contents.keyType + ".m." + astr;
+      var keyName = "tok." + tokserial + ".t.p.s." + sigpos + ".kt." + keypub.contents.keyType + ".m." + astr;
       var key = {
 	name: keyName,
 	id: null,
@@ -1146,17 +1223,38 @@ var WeaveCrypto = {
 	keyUsage: [sigpos == 1? "verify": "encrypt"],
 	type: "public",
 
-	cs_pkcs11id: keyptr.contents.pkcs11ID.toString()
+	cs_pkcs11id: keypub.contents.pkcs11ID.toString()
       };
       if (name != null) {
-	if (keyName != name)
-	  continue;
-	else
+	if (keyName == name)
+	  return [key];
+      } else {
+	keys[keys.length] = key;
+      }
+
+      var keyName = "tok." + tokserial + ".t.v.s." + sigpos + ".kt." + keypriv.contents.keyType + ".m." + astr;
+      var key = {
+	name: keyName,
+	id: null,
+	algorithm: sigpos == 1? "RSASSA-PKCS1-v1_5": "RSAES-PKCS1-v1_5",
+	extractable: false,
+	keyUsage: [sigpos == 1? "sign": "decrypt"],
+	type: "private",
+
+	cs_pkcs11id: keypriv.contents.pkcs11ID.toString()
+      };
+      if (name != null) {
+	if (keyName == name)
 	  return [key];
       } else {
 	keys[keys.length] = key;
       }
     }
+
+    if (!PUBKEY_LIST_END(nodepub, llistpub))
+      dump("ERROR: CryptoStick consistency error: public keys without private keys in slot " + tokenName + "\n");
+    if (!PRIVKEY_LIST_END(nodepriv, llistpriv))
+      dump("ERROR: CryptoStick consistency error: private keys without public keys in slot " + tokenName + "\n");
     this.nss.SECKEY_DestroyPublicKeyList(listpub);
     return keys;
   },
@@ -1182,6 +1280,7 @@ var WeaveCrypto = {
 	} catch (errx) {
 	}
       }
+      dump(err + "\n"); dump(err.stack + "\n");
       return { ok: false, data: "Error looking for the CryptoStick NSS slot: " + err };
     }
     /* NOTREACHED */
