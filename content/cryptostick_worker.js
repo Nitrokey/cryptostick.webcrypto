@@ -81,6 +81,8 @@ const INITIALIZE        = "init";
 
 const RES_GET_KEY_BY_NAME	= "done_getKeyByName";
 const RES_EXPORT_KEY		= "done_exportKey";
+const RES_SIGN			= "done_sign";
+const RES_DECRYPT		= "done_decrypt";
 
 onmessage = function cryptostickWorkerOnMessage(aEvent)
 {
@@ -113,29 +115,23 @@ onmessage = function cryptostickWorkerOnMessage(aEvent)
     result = WeaveCryptoWrapper.encrypt(aEvent.data.plainText, aEvent.data.pubKey);
     postMessage({ cipherMessage: result, action: "dataEncrypted" });
     break;
-  case DECRYPT:
-    let cipherMessage = {
-      content: aEvent.data.cipherContent,
-      wrappedKey: aEvent.data.cipherWrappedKey,
-      pubKey: aEvent.data.cipherPubKey,
-      iv: aEvent.data.cipherIV
-    };
-    result = WeaveCryptoWrapper.decrypt(cipherMessage,
-                                        aEvent.data.passphrase,
-                                        aEvent.data.privKey,
-                                        aEvent.data.salt,
-                                        aEvent.data.iv);
-
-    postMessage({ plainText: result, action: "dataDecrypted" });
-    break;
   case SIGN:
-    result = WeaveCryptoWrapper.sign(aEvent.data.hash,
-                                     aEvent.data.passphrase,
-                                     aEvent.data.privKey,
-                                     aEvent.data.iv,
-                                     aEvent.data.salt);
-
-    postMessage({ signature: result, action: "messageSigned" });
+    var data;
+    try {
+      data = WeaveCrypto.sign(aEvent.data.algo, aEvent.data.key, aEvent.data.data);
+    } catch (err) {
+      data = { ok: false, data: 'CryptoStick.crypto.subtle.worker.sign error: ' + err };
+    }
+    postMessage({ data: data, result: aEvent.data.result, action: RES_SIGN });
+    break;
+  case DECRYPT:
+    var data;
+    try {
+      data = WeaveCrypto.decrypt(aEvent.data.algo, aEvent.data.key, aEvent.data.data);
+    } catch (err) {
+      data = { ok: false, data: 'CryptoStick.crypto.subtle.worker.decrypt error: ' + err };
+    }
+    postMessage({ data: data, result: aEvent.data.result, action: RES_DECRYPT });
     break;
   case VERIFY:
     result = WeaveCryptoWrapper.verify(aEvent.data.hash,
@@ -613,6 +609,7 @@ var WeaveCrypto = {
     // nsprpub/pr/include/prtypes.h#435
     // typedef PRIntn PRBool; --> int
     this.nss_t.PRBool = ctypes.int;
+    this.nss_t.PRErrorCode = ctypes.uint32_t;
     // security/nss/lib/util/seccomon.h#91
     // typedef enum
     this.nss_t.SECStatus = ctypes.int;
@@ -782,6 +779,13 @@ var WeaveCrypto = {
     this.nss.SEC_OID_HMAC_SHA1            = 294;
     this.nss.SEC_OID_PKCS1_RSA_ENCRYPTION = 16;
 
+    this.nss.PR_GetError = nsslib.declare("PR_GetError",
+                                                  ctypes.default_abi, this.nss_t.PRErrorCode);
+    this.nss.PR_GetErrorTextLength = nsslib.declare("PR_GetErrorTextLength",
+                                                  ctypes.default_abi, ctypes.uint32_t);
+    this.nss.PR_GetErrorText = nsslib.declare("PR_GetErrorText",
+                                                  ctypes.default_abi, ctypes.void_t,
+						  ctypes.char.ptr);
 
     // security/nss/lib/pk11wrap/pk11pub.h#286
     // SECStatus PK11_GenerateRandom(unsigned char *data,int len);
@@ -871,6 +875,16 @@ var WeaveCrypto = {
                                         this.nss_t.SECKEYPrivateKey.ptr,
                                         this.nss_t.SECItem.ptr,
                                         this.nss_t.SECItem.ptr);
+
+    this.nss.PK11_PubDecryptRaw = nsslib.declare("PK11_PubDecryptRaw",
+                                        ctypes.default_abi,
+					this.nss_t.SECStatus,
+					this.nss_t.SECKEYPrivateKey.ptr,
+					ctypes.unsigned_char.ptr,
+					ctypes.uint32_t.ptr,
+					ctypes.uint32_t,
+					ctypes.unsigned_char.ptr,
+					ctypes.uint32_t);
 
     // security/nss/pk11wrap/pk11pub.h#687
     // SECStatus PK11_Verify(SECKEYPublicKey *key, SECItem *sig, SECItem *hash, void *wincx);
@@ -1267,6 +1281,7 @@ var WeaveCrypto = {
 	key = { type: 'private', key: keypriv, slotlist: listpriv };
       if (name != null) {
 	if (keyName == name) {
+	  if (retKey) dump("RDBG got a private key for name " + name + ", key: " + key.key + ", type " + key.key.contents.keyType + ", len " + key.key.contents.len + "\n");
 	  keys = [key];
 	  foundPriv = true;
 	  break;
@@ -1370,6 +1385,30 @@ var WeaveCrypto = {
     return { ok: true, data: keys[0] };
   },
 
+  nssErrorDesc : function() {
+    var code, len, text;
+
+    dump("RDBG nssErrorDesc() invoked\n");
+    code = this.nss.PR_GetError();
+    dump("RDBG - code " + code + "\n");
+    len = this.nss.PR_GetErrorTextLength();
+    dump("RDBG - len " + len + "\n");
+    if (len == 0) {
+      text = "(no error text)";
+    } else {
+      var ctext = new ctypes.ArrayType(ctypes.char, len);
+      dump("RDBG - ctext " + ctext + "\n");
+      dump("RDBG - ctext.address() " + ctext.address() + "\n");
+      this.nss.PR_GetErrorText(ctext.address());
+      var i;
+      text = "";
+      for (i = 0; i < len; i++)
+	text += ctext[i];
+      dump("RDBG - got text " + text + "\n");
+    }
+    return "NSS error " + code + ": " + text;
+  },
+
   algorithm : AES_256_CBC,
 
   keypairBits : 2048,
@@ -1396,29 +1435,72 @@ var WeaveCrypto = {
   },
 
 
-  decrypt : function(cipherText, symmetricKey, iv) {
-    this.log("decrypt() called");
+  decrypt : function(algo, key, data) {
+    dump("RDBG wrk decrypt, algo: " + algo + ", key: " + key + ", data: " + data + "\n");
+    if (algo.name != 'RSAES-PKCS1-v1_5')
+      return { ok: false, data: 'Unsupported algorithm name ' + algo.name };
 
-    let inputUCS2 = "";
-    if (cipherText.length)
-      inputUCS2 = atob(cipherText);
+    key = JSON.parse(key);
+    var res = this.findCryptoStickKey(key.name);
+    if (!res.ok)
+      return res;
+    var seckey = res.data;
+    dump("RDBG - seckey " + seckey + "\n");
+    dump("RDBG - seckey.key " + seckey.key + "\n");
+    try {
 
-    // We can't have js-ctypes create the buffer directly from the string
-    // (as in encrypt()), because we do _not_ want it to do UTF8
-    // conversion... We've got random binary data in the input's low byte.
-    let input = new ctypes.ArrayType(ctypes.unsigned_char, inputUCS2.length)();
-    this.byteCompress(inputUCS2, input);
+      /*
+      data = JSON.parse(data);
+      / * Oof, so if we want to utilize these functions, we have to go there and back :) * /
+      var datastr = "", i;
+      for (var i = 0; i < data.length; i++)
+	datastr = datastr + String.fromCharCode(data[i]);
+	*/
+      data = JSON.parse(data);
+      var i;
+      var enc = new ctypes.ArrayType(ctypes.unsigned_char, data.length)();
+      dump("RDBG enc: " + enc + "\n");
+      var ptr;
+      /*
+      for (i = 0, ptr = enc.addressOfElement(0); i < data.length; i++, ptr = ptr.increment()) {
+	ptr.contents = data[i];
+	*/
+      for (i = 0; i < data.length; i++) {
+	enc[i] = data[i];
+	dump("RDBG - data[" + i + "] = " + data[i] + ", enc[i] = " + enc[i] + "\n");
+      }
 
-    let outputBuffer = new ctypes.ArrayType(ctypes.unsigned_char, input.length)();
+      var decLen = 2048; /* Blaaa! */
+      var dec = new ctypes.ArrayType(ctypes.unsigned_char, decLen)();
+      dump("RDBG dec: " + dec + "\n");
 
-    outputBuffer = this._commonCrypt(input, outputBuffer, symmetricKey, iv, this.nss.CKA_DECRYPT);
-    this.log("outputBuffer: " + outputBuffer);
-    // outputBuffer contains UTF-8 data, let js-ctypes autoconvert that to a JS string.
-    // XXX Bug 573842: wrap the string from ctypes to get a new string, so
-    // we don't hit bug 573841.
-    // XXXddahl: this may not be needed any longer as bug 573841 is fixed
-    return "" + outputBuffer.readString() + "";
-    // return outputBuffer.readString();
+      var decOutLen = new ctypes.uint32_t();
+      /*
+      res = this.nss.PK11_PubDecryptRaw(seckey.key, dec.addressOfElement(0), decOutLen.address(),
+	  dec.len, enc.addressOfElement(0), data.length);
+	  */
+      res = this.nss.PK11_PubDecryptRaw(seckey.key, dec.addressOfElement(0), decOutLen.address(), decLen, enc.addressOfElement(0), data.length);
+	  /*dec.len, enc.addressOfElement(0), data.length);*/
+      dump("RDBG PK11_PubDecryptRaw() returned " + res + ": " + this.nssErrorDesc() + "\n");
+      if (res != 0)
+	throw "PK11_PubDecryptRaw() returned " + res;
+      dump("RDBG and now decOutLen is " + decOutLen + " and dec is " + dec + "\n");
+
+      var arr = [];
+      for (i = 0; i < decOutLen.contents; i++) {
+	dump("RDBG dec[" + i + "] = " + dec.contents[i] + "\n");
+	arr[i] = dec.contents[i];
+      }
+      dump("RDBG and arr is " + arr.length + " bytes: " + arr + "\n");
+
+      this.destroyLists([seckey]);
+      seckey.slotlist = null;
+      return { ok: true, data: arr };
+    } catch (err) {
+      if (seckey != null && seckey.slotlist != null)
+	this.destroyLists([seckey]);
+      return { ok: false, data: 'Error signing using the CryptoStick: ' + err };
+    }
   },
 
 
@@ -1490,67 +1572,69 @@ var WeaveCrypto = {
     }
   },
 
-  sign : function _sign(encodedPrivateKey, iv, salt, passphrase, hash) {
-    this.log("sign() called");
+  sign : function _sign(algo, key, data) {
+    dump("RDBG WeaveCrypto.sign, algo " + algo + "\n- key: " + key + "\n- data: " + data + "\n");
+    dump("RDBG - data.len " + data.length + "\n");
+    if (algo.name != "RSASSA-PKCS1-v1_5")
+      return { ok: false, data: 'Unsupported algorithm name ' + algo.name };
 
-    let privKey, ivParam, wrappedPrivKey, ivItem,
-    privKeyUsage, wrapMech, keyID, pbeKey, slot, _hash, sig;
+    key = JSON.parse(key);
+    var res = this.findCryptoStickKey(key.name);
+    if (!res.ok)
+      return res;
+    var seckey = res.data;
+    dump("RDBG - seckey " + seckey + "\n");
+    dump("RDBG - seckey.key " + seckey.key + "\n");
+    try {
 
-    wrappedPrivKey = this.makeSECItem(encodedPrivateKey, true);
+      /*
+      data = JSON.parse(data);
+      / * Oof, so if we want to utilize these functions, we have to go there and back :) * /
+      var datastr = "", i;
+      for (var i = 0; i < data.length; i++)
+	datastr = datastr + String.fromCharCode(data[i]);
+	*/
+      data = JSON.parse(data);
+      var s = "", i;
+      for (i = 0; i < data.length; i++)
+	s += "*";
+      dump("RDBG a string of " + s.length + " characters: " + s + "...\n");
+      hash = this.makeSECItem(s, false);
+      dump("RDBG hash: " + hash + "\n");
+      var ptr;
+      for (i = 0, ptr = hash.data; i < data.length; i++, ptr = ptr.increment()) {
+	ptr.contents = data[i];
+	dump("RDBG - data[" + i + "] = " + data[i] + ", ptr = " + ptr.contents + "\n");
+      }
 
-    _hash = this.makeSECItem(hash, false);
+      sig = this.makeSECItem("", false);
+      var sigLen = this.nss.PK11_SignatureLen(seckey.key);
+      sig.len = sigLen;
+      sig.data = new ctypes.ArrayType(ctypes.unsigned_char, sigLen)();
+      dump("RDBG sig: " + sig + "\n");
 
-    sig = this.makeSECItem("", false);
+      res = this.nss.PK11_Sign(seckey.key, sig.address(), hash.address());
+      dump("RDBG PK11_Sign() returned " + res + ": " + this.nssErrorDesc() + "\n");
+      if (res != 0)
+	throw "PK11_Sign() returned " + res;
+      dump("RDBG and now sig is " + sig + "\n");
 
-    ivItem  = this.makeSECItem(iv, true);
+      var arr = [];
+      ptr = sig.data;
+      for (i = 0, ptr = sig.data; i < sig.len; i++, ptr = ptr.increment()) {
+	dump("RDBG ptr.contents " + ptr.contents + "\n");
+	arr[i] = ptr.contents;
+      }
+      dump("RDBG and arr is " + arr.length + " bytes: " + arr + "\n");
 
-    keyID = ivItem.address();
-
-    let privKeyUsageLength = 1;
-    privKeyUsage =
-      new ctypes.ArrayType(this.nss_t.CK_ATTRIBUTE_TYPE, privKeyUsageLength)();
-    privKeyUsage[0] = this.nss.CKA_UNWRAP;
-
-    pbeKey = this._deriveKeyFromPassphrase(passphrase, salt);
-
-    // AES_128_CBC --> CKM_AES_CBC --> CKM_AES_CBC_PAD
-    wrapMech = this.nss.PK11_AlgtagToMechanism(this.algorithm);
-    wrapMech = this.nss.PK11_GetPadMechanism(wrapMech);
-
-    if (wrapMech == this.nss.CKM_INVALID_MECHANISM)
-      throw new Error("unwrapSymKey: unknown key mech");
-
-    ivParam = this.nss.PK11_ParamFromIV(wrapMech, ivItem.address());
-    if (ivParam.isNull())
-      throw new Error("unwrapSymKey: PK11_ParamFromIV failed");
-
-    slot = this.nss.PK11_GetInternalSlot();
-    if (slot.isNull())
-      throw new Error("couldn't get internal slot");
-    privKey = this.nss.PK11_UnwrapPrivKey(slot,
-                                          pbeKey,
-                                          wrapMech,
-                                          ivParam,
-                                          wrappedPrivKey.address(),
-                                          null,   // label
-                                          keyID,
-                                          false, // isPerm (token object)
-                                          true,  // isSensitive
-                                          this.nss.CKK_RSA,
-                                          privKeyUsage.addressOfElement(0),
-                                          privKeyUsageLength,
-                                          null);  // wincx
-    if (privKey.isNull()) {
-      throw new Error("sign error: Could not unwrap private key: incorrect passphrase entered");
+      this.destroyLists([seckey]);
+      seckey.slotlist = null;
+      return { ok: true, data: arr };
+    } catch (err) {
+      if (seckey != null && seckey.slotlist != null)
+	this.destroyLists([seckey]);
+      return { ok: false, data: 'Error signing using the CryptoStick: ' + err };
     }
-    let sigLen = this.nss.PK11_SignatureLen(privKey);
-    sig.len = sigLen;
-    sig.data = new ctypes.ArrayType(ctypes.unsigned_char, sigLen)();
-
-    let status = this.nss.PK11_Sign(privKey, sig.address(), _hash.address());
-    if (status == -1)
-      throw new Error("Could not sign message");
-    return this.encodeBase64(sig.data, sig.len);
   },
 
   verify : function _verify(encodedPublicKey, signature, hash) {

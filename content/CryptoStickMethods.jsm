@@ -166,6 +166,26 @@ worker.onmessage = function DCM_worker_onmessage(aEvent) {
       res._onerror(buildTarget(exp.data));
     }
     break;
+  case "done_sign":
+    exp = aEvent.data.data;
+    var res = resultPop(aEvent.data.result);
+    if (exp.ok) {
+      dump("RDBG done_sign: " + exp.data.length + " things: " + exp.data + "\n");
+      res._oncomplete(buildTarget(exp.data));
+    } else {
+      res._onerror(buildTarget(exp.data));
+    }
+    break;
+  case "done_decrypt":
+    exp = aEvent.data.data;
+    var res = resultPop(aEvent.data.result);
+    if (exp.ok) {
+      dump("RDBG done_decrypt: " + exp.data.length + " things: " + exp.data + "\n");
+      res._oncomplete(buildTarget(exp.data));
+    } else {
+      res._onerror(buildTarget(exp.data));
+    }
+    break;
   case SHA256_COMPLETE:
     Callbacks.handleSHA256(aEvent.data.hashedString);
     break;
@@ -353,12 +373,32 @@ var CryptoStickMethods = {
 			 result: resultIdx });
   },
 
-  exportKey: function CSM_getKeyByName(format, key, res)
+  exportKey: function CSM_exportKey(format, key, res)
   {
     var resultIdx = resultRegister(res);
     worker.postMessage({ action: "exportKey",
 			 format: format,
 			 key: key,
+			 result: resultIdx });
+  },
+
+  sign: function CSM_sign(algo, key, data, res)
+  {
+    var resultIdx = resultRegister(res);
+    worker.postMessage({ action: "sign",
+			 algo: algo,
+			 key: key,
+			 data: data,
+			 result: resultIdx });
+  },
+
+  decrypt: function CSM_decrypt(algo, key, data, res)
+  {
+    var resultIdx = resultRegister(res);
+    worker.postMessage({ action: "decrypt",
+			 algo: algo,
+			 key: key,
+			 data: data,
 			 result: resultIdx });
   },
 

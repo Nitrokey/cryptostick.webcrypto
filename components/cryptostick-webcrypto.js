@@ -139,9 +139,13 @@ CryptoStickAPI.prototype = {
 
       crypto: {
 	subtle: {
+	  decrypt: self.decrypt.bind(self),
 	  exportKey: self.exportKey.bind(self),
+	  sign: self.sign.bind(self),
 	  __exposedProps__: {
-	    exportKey: "r"
+	    decrypt: "r",
+	    exportKey: "r",
+	    sign: "r"
 	  }
 	},
 	__exposedProps__: {
@@ -229,6 +233,67 @@ CryptoStickAPI.prototype = {
       crypto.exportKey(format, JSON.stringify(key), res, this.sandbox);
     } catch (err) {
       res._onerror("CryptoStick.crypto.subtle.exportKey() exception: " + err);
+    }
+    return res;
+  },
+
+  _buildTarget: function CS_BuildTarget(data)
+  {
+    return {
+      target: {
+	result: data,
+	__exposedProps__: {
+	  result: "r"
+	}
+      },
+      __exposedProps__: {
+	target: "r"
+      }
+    };
+  },
+
+  decrypt: function CS_Decrypt(algo, key, data)
+  {
+    var res = new CryptoStickPromise();
+
+    dump("RDBG CS_Decrypt, algo " + algo + " key " + key + " data " + data + "\n");
+    if (algo == null || typeof(algo) != "object" || algo.name == null ||
+	typeof(algo.name) != "string") {
+      res._onerror(this._buildTarget("The sign() 'algorithm' argument should have a 'name' string property"));
+    } else if (key == null || typeof(key) != "object" || key.cs_pkcs11id == null) {
+      res._onerror(this._buildTarget("The sign() 'key' argument should be a cryptostick.webcrypto key"));
+    } else if (data == null) {
+      res._onerror(this._buildTarget("The sign() 'data' argument should be an array of integers"));
+    } else {
+      try {
+	/* Pff.  Convert a Uint8Array to a string. */
+	crypto.decrypt(algo, JSON.stringify(key), JSON.stringify(data), res, this.sandbox);
+      } catch (err) {
+	res._onerror(this._buildTarget("CryptoStick.crypto.subtle.decrypt() exception: " + err));
+      }
+    }
+    return res;
+  },
+
+  sign: function CS_Sign(algo, key, data)
+  {
+    var res = new CryptoStickPromise();
+
+    dump("RDBG CS_Sign, algo " + algo + " key " + key + " data " + data + "\n");
+    if (algo == null || typeof(algo) != "object" || algo.name == null ||
+	typeof(algo.name) != "string") {
+      res._onerror(this._buildTarget("The sign() 'algorithm' argument should have a 'name' string property"));
+    } else if (key == null || typeof(key) != "object" || key.cs_pkcs11id == null) {
+      res._onerror(this._buildTarget("The sign() 'key' argument should be a cryptostick.webcrypto key"));
+    } else if (data == null) {
+      res._onerror(this._buildTarget("The sign() 'data' argument should be an array of integers"));
+    } else {
+      try {
+	/* Pff.  Convert a Uint8Array to a string. */
+	crypto.sign(algo, JSON.stringify(key), JSON.stringify(data), res, this.sandbox);
+      } catch (err) {
+	res._onerror(this._buildTarget("CryptoStick.crypto.subtle.sign() exception: " + err));
+      }
     }
     return res;
   }
