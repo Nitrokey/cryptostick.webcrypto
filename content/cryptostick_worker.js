@@ -1281,7 +1281,6 @@ var WeaveCrypto = {
 	key = { type: 'private', key: keypriv, slotlist: listpriv };
       if (name != null) {
 	if (keyName == name) {
-	  if (retKey) dump("RDBG got a private key for name " + name + ", key: " + key.key + ", type " + key.key.contents.keyType + ", len " + key.key.contents.len + "\n");
 	  keys = [key];
 	  foundPriv = true;
 	  break;
@@ -1388,23 +1387,17 @@ var WeaveCrypto = {
   nssErrorDesc : function() {
     var code, len, text;
 
-    dump("RDBG nssErrorDesc() invoked\n");
     code = this.nss.PR_GetError();
-    dump("RDBG - code " + code + "\n");
     len = this.nss.PR_GetErrorTextLength();
-    dump("RDBG - len " + len + "\n");
     if (len == 0) {
       text = "(no error text)";
     } else {
       var ctext = new ctypes.ArrayType(ctypes.char, len);
-      dump("RDBG - ctext " + ctext + "\n");
-      dump("RDBG - ctext.address() " + ctext.address() + "\n");
       this.nss.PR_GetErrorText(ctext.address());
       var i;
       text = "";
       for (i = 0; i < len; i++)
 	text += ctext[i];
-      dump("RDBG - got text " + text + "\n");
     }
     return "NSS error " + code + ": " + text;
   },
@@ -1436,7 +1429,6 @@ var WeaveCrypto = {
 
 
   decrypt : function(algo, key, data) {
-    dump("RDBG wrk decrypt, algo: " + algo + ", key: " + key + ", data: " + data + "\n");
     if (algo.name != 'RSAES-PKCS1-v1_5')
       return { ok: false, data: 'Unsupported algorithm name ' + algo.name };
 
@@ -1445,48 +1437,25 @@ var WeaveCrypto = {
     if (!res.ok)
       return res;
     var seckey = res.data;
-    dump("RDBG - seckey " + seckey + "\n");
-    dump("RDBG - seckey.key " + seckey.key + "\n");
     try {
-
-      /*
-      data = JSON.parse(data);
-      / * Oof, so if we want to utilize these functions, we have to go there and back :) * /
-      var datastr = "", i;
-      for (var i = 0; i < data.length; i++)
-	datastr = datastr + String.fromCharCode(data[i]);
-	*/
       data = JSON.parse(data);
       var i;
       var enc = new ctypes.ArrayType(ctypes.unsigned_char, data.length)();
-      dump("RDBG enc: " + enc + "\n");
       var ptr;
-      /*
-      for (i = 0, ptr = enc.addressOfElement(0); i < data.length; i++, ptr = ptr.increment()) {
-	ptr.contents = data[i];
-	*/
-      for (i = 0; i < data.length; i++) {
+      for (i = 0; i < data.length; i++)
 	enc[i] = data[i];
-	dump("RDBG - data[" + i + "] = " + data[i] + ", enc[i] = " + enc[i] + "\n");
-      }
 
       var decLen = 2048; /* Blaaa! */
       var dec = new ctypes.ArrayType(ctypes.unsigned_char, decLen)();
-      dump("RDBG dec: " + dec + "\n");
 
       var decOutLen = new ctypes.uint32_t();
       res = this.nss.PK11_PubDecryptRaw(seckey.key, dec.addressOfElement(0), decOutLen.address(), decLen, enc.addressOfElement(0), data.length);
-      dump("RDBG PK11_PubDecryptRaw() returned " + res + ": " + this.nssErrorDesc() + "\n");
       if (res != 0)
-	throw "PK11_PubDecryptRaw() returned " + res;
-      dump("RDBG and now decOutLen is " + decOutLen + " and dec is " + dec + "\n");
+	throw "PK11_PubDecryptRaw() returned " + res + ": " + this.nssErrorDesc();
 
       var arr = [];
-      for (i = 0; i < decOutLen.value; i++) {
-	dump("RDBG dec[" + i + "] = " + dec[i] + "\n");
+      for (i = 0; i < decOutLen.value; i++)
 	arr[i] = dec[i];
-      }
-      dump("RDBG and arr is " + arr.length + " bytes: " + arr + "\n");
 
       this.destroyLists([seckey]);
       seckey.slotlist = null;
@@ -1568,8 +1537,6 @@ var WeaveCrypto = {
   },
 
   sign : function _sign(algo, key, data) {
-    dump("RDBG WeaveCrypto.sign, algo " + algo + "\n- key: " + key + "\n- data: " + data + "\n");
-    dump("RDBG - data.len " + data.length + "\n");
     if (algo.name != "RSASSA-PKCS1-v1_5")
       return { ok: false, data: 'Unsupported algorithm name ' + algo.name };
 
@@ -1578,49 +1545,29 @@ var WeaveCrypto = {
     if (!res.ok)
       return res;
     var seckey = res.data;
-    dump("RDBG - seckey " + seckey + "\n");
-    dump("RDBG - seckey.key " + seckey.key + "\n");
     try {
-
-      /*
-      data = JSON.parse(data);
-      / * Oof, so if we want to utilize these functions, we have to go there and back :) * /
-      var datastr = "", i;
-      for (var i = 0; i < data.length; i++)
-	datastr = datastr + String.fromCharCode(data[i]);
-	*/
       data = JSON.parse(data);
       var s = "", i;
       for (i = 0; i < data.length; i++)
 	s += "*";
-      dump("RDBG a string of " + s.length + " characters: " + s + "...\n");
       hash = this.makeSECItem(s, false);
-      dump("RDBG hash: " + hash + "\n");
       var ptr;
-      for (i = 0, ptr = hash.data; i < data.length; i++, ptr = ptr.increment()) {
+      for (i = 0, ptr = hash.data; i < data.length; i++, ptr = ptr.increment())
 	ptr.contents = data[i];
-	dump("RDBG - data[" + i + "] = " + data[i] + ", ptr = " + ptr.contents + "\n");
-      }
 
       sig = this.makeSECItem("", false);
       var sigLen = this.nss.PK11_SignatureLen(seckey.key);
       sig.len = sigLen;
       sig.data = new ctypes.ArrayType(ctypes.unsigned_char, sigLen)();
-      dump("RDBG sig: " + sig + "\n");
 
       res = this.nss.PK11_Sign(seckey.key, sig.address(), hash.address());
-      dump("RDBG PK11_Sign() returned " + res + ": " + this.nssErrorDesc() + "\n");
       if (res != 0)
-	throw "PK11_Sign() returned " + res;
-      dump("RDBG and now sig is " + sig + "\n");
+	throw "PK11_Sign() returned " + res + ": " + this.nssErrorDesc();
 
       var arr = [];
       ptr = sig.data;
-      for (i = 0, ptr = sig.data; i < sig.len; i++, ptr = ptr.increment()) {
-	dump("RDBG ptr.contents " + ptr.contents + "\n");
+      for (i = 0, ptr = sig.data; i < sig.len; i++, ptr = ptr.increment())
 	arr[i] = ptr.contents;
-      }
-      dump("RDBG and arr is " + arr.length + " bytes: " + arr + "\n");
 
       this.destroyLists([seckey]);
       seckey.slotlist = null;

@@ -170,7 +170,6 @@ worker.onmessage = function DCM_worker_onmessage(aEvent) {
     exp = aEvent.data.data;
     var res = resultPop(aEvent.data.result);
     if (exp.ok) {
-      dump("RDBG done_sign: " + exp.data.length + " things: " + exp.data + "\n");
       res._oncomplete(buildTarget(exp.data));
     } else {
       res._onerror(buildTarget(exp.data));
@@ -180,7 +179,6 @@ worker.onmessage = function DCM_worker_onmessage(aEvent) {
     exp = aEvent.data.data;
     var res = resultPop(aEvent.data.result);
     if (exp.ok) {
-      dump("RDBG done_decrypt: " + exp.data.length + " things: " + exp.data + "\n");
       res._oncomplete(buildTarget(exp.data));
     } else {
       res._onerror(buildTarget(exp.data));

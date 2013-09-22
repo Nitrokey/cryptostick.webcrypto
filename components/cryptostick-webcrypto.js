@@ -256,7 +256,6 @@ CryptoStickAPI.prototype = {
   {
     var res = new CryptoStickPromise();
 
-    dump("RDBG CS_Decrypt, algo " + algo + " key " + key + " data " + data + "\n");
     if (algo == null || typeof(algo) != "object" || algo.name == null ||
 	typeof(algo.name) != "string") {
       res._onerror(this._buildTarget("The sign() 'algorithm' argument should have a 'name' string property"));
@@ -279,7 +278,6 @@ CryptoStickAPI.prototype = {
   {
     var res = new CryptoStickPromise();
 
-    dump("RDBG CS_Sign, algo " + algo + " key " + key + " data " + data + "\n");
     if (algo == null || typeof(algo) != "object" || algo.name == null ||
 	typeof(algo.name) != "string") {
       res._onerror(this._buildTarget("The sign() 'algorithm' argument should have a 'name' string property"));
