@@ -1475,21 +1475,16 @@ var WeaveCrypto = {
       dump("RDBG dec: " + dec + "\n");
 
       var decOutLen = new ctypes.uint32_t();
-      /*
-      res = this.nss.PK11_PubDecryptRaw(seckey.key, dec.addressOfElement(0), decOutLen.address(),
-	  dec.len, enc.addressOfElement(0), data.length);
-	  */
       res = this.nss.PK11_PubDecryptRaw(seckey.key, dec.addressOfElement(0), decOutLen.address(), decLen, enc.addressOfElement(0), data.length);
-	  /*dec.len, enc.addressOfElement(0), data.length);*/
       dump("RDBG PK11_PubDecryptRaw() returned " + res + ": " + this.nssErrorDesc() + "\n");
       if (res != 0)
 	throw "PK11_PubDecryptRaw() returned " + res;
       dump("RDBG and now decOutLen is " + decOutLen + " and dec is " + dec + "\n");
 
       var arr = [];
-      for (i = 0; i < decOutLen.contents; i++) {
-	dump("RDBG dec[" + i + "] = " + dec.contents[i] + "\n");
-	arr[i] = dec.contents[i];
+      for (i = 0; i < decOutLen.value; i++) {
+	dump("RDBG dec[" + i + "] = " + dec[i] + "\n");
+	arr[i] = dec[i];
       }
       dump("RDBG and arr is " + arr.length + " bytes: " + arr + "\n");
 
